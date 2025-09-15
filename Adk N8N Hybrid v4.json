@@ -1,0 +1,156 @@
+{
+  "name": "Adk N8N Hybrid v4",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8080/run_agent",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "agent_name",
+              "value": "={{ $json.agent_name }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "name": "session_id",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        192,
+        0
+      ],
+      "id": "35cf13b8-8a72-46ae-9cea-2bf2283c8602",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "f11820f4-aaf0-4bb8-b536-b9097cc67877",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -288,
+        0
+      ],
+      "id": "5a36fec8-e0ca-4467-b62d-8198f96a0ee2",
+      "name": "Webhook",
+      "webhookId": "f11820f4-aaf0-4bb8-b536-b9097cc67877"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        608,
+        0
+      ],
+      "id": "f02b08aa-4456-4f37-965c-33a5d4a73bc3",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The new, simpler code. No more parsing!\n\n// Get the structured data directly from the webhook body.\nconst agentName = items[0].json.body.agent_name;\nconst message = items[0].json.body.message;\nconst userId = items[0].json.body.userId;\nconst sessionId = items[0].json.body.session_id;\n\n// Prepare the clean output for the next node (HTTP Request).\nconst newOutput = {\n  agent_name: agentName,\n  message: message,\n  user_id: userId,\n  session_id: sessionId\n};\n\n// Replace the original data with our clean data.\nitems[0].json = newOutput;\n\n// Return the result for the next node.\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        0
+      ],
+      "id": "959a8f7b-f457-41d0-89ae-39055d5c03a4",
+      "name": "Code Node 1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This node passes the full, structured response from the agent wrapper.\n\n// Get the full JSON response from the previous HTTP Request node.\nconst agentResponse = items[0].json;\n\n// The wrapper already provides a clean JSON object like:\n// { \"response\": \"Hello...\", \"session_id\": \"session-123...\", ... }\n// We just need to wrap it correctly for the final output.\nconst responseObject = {\n  message: agentResponse.response,\n  session_id: agentResponse.session_id\n};\n\n// Use JSON.stringify() to handle special characters correctly.\nconst finalJsonString = JSON.stringify(responseObject);\n\n// Return the final data string.\nreturn [{ json: { data: finalJsonString } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "id": "5799ff73-a849-457e-86ee-242d134a549e",
+      "name": "Code Node 2"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code Node 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code Node 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Node 1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Node 2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1a6cfbfa-53db-4367-a653-f813df4b8b8b",
+  "meta": {
+    "instanceId": "b5c426e18ce27df549b664b38ac3fadaafdc4fb8e7cfee51188688bcb4972e07"
+  },
+  "id": "yuw8f5ufNKbwKQbP",
+  "tags": []
+}
