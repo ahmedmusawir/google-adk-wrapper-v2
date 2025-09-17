@@ -28,6 +28,8 @@ logging.basicConfig(level=logging.INFO)
 # --- Main Endpoint (No changes here) ---
 @app.post("/run_agent", response_model=AgentResponse)
 async def run_agent(request: AgentRequest):
+    print(f"[WRAPPER] Received request for AGENT: {request.agent_name}, USER: {request.user_id}, SESSION: {request.session_id}")
+
     """Main gateway endpoint - routes requests to appropriate ADK agents"""
     if request.agent_name not in AGENT_REGISTRY:
         raise HTTPException(status_code=404, detail=f"Agent '{request.agent_name}' not found")
@@ -123,6 +125,68 @@ async def health_check():
 @app.get("/agents")
 async def list_agents():
     return {"agents": list(AGENT_REGISTRY.keys())}
+
+# -------------------------------------------------------------------
+# NEW: Conversation History Endpoint
+# -------------------------------------------------------------------
+
+class HistoryRequest(BaseModel):
+    agent_name: str
+    user_id: str
+    session_id: str
+
+def _normalize_events(session_json: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Convert ADK session events into a simple role/content history."""
+    history: List[Dict[str, str]] = []
+    events = session_json.get("events", [])
+    for event in events:
+        author = event.get("author")
+        if author not in ("USER", "MODEL"):
+            continue
+        content = event.get("content", {})
+        parts = content.get("parts", [])
+        if not parts or not isinstance(parts, list):
+            continue
+        text = parts[0].get("text", "") if isinstance(parts[0], dict) else ""
+        if not text:
+            continue
+        role = "user" if author == "USER" else "assistant"
+        history.append({"role": role, "content": text})
+    return history
+
+@app.post("/get_history")
+async def get_history(req: HistoryRequest):
+    """Fetch conversation history from ADK via wrapper (single source of truth)."""
+    if not req.session_id:
+        return {"history": []}
+
+    if req.agent_name not in AGENT_REGISTRY:
+        raise HTTPException(status_code=404, detail=f"Agent '{req.agent_name}' not found")
+    
+    agent_url = AGENT_REGISTRY[req.agent_name]
+    history_url = f"{agent_url}/apps/{req.agent_name}/users/{req.user_id}/sessions/{req.session_id}"
+
+    logging.info(f"[WRAPPER] GET_HISTORY → {history_url}")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(history_url)
+            
+            if r.status_code == 404:
+                logging.warning(f"[WRAPPER] Session not found at ADK: {history_url}")
+                return {"history": []}
+            
+            r.raise_for_status()
+            session_json = r.json()
+            history = _normalize_events(session_json)
+            return {"history": history}
+    
+    except httpx.HTTPStatusError as e:
+        logging.error(f"[WRAPPER] History fetch error {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail=f"ADK error {e.response.status_code}")
+    except Exception as e:
+        logging.error(f"[WRAPPER] Unexpected history fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Main Execution (No changes here) ---
 if __name__ == "__main__":

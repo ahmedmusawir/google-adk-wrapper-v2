@@ -6,6 +6,7 @@ import asyncio
 from typing import Dict, Optional, List, Any
 import logging
 import time
+from config import AGENT_REGISTRY
 
 # --- Setup and Models (No changes here) ---
 app = FastAPI(title="ADK Agent Gateway", version="1.2.0")
@@ -22,19 +23,14 @@ class AgentResponse(BaseModel):
     agent_name: str
     status: str
 
-AGENT_REGISTRY = {
-    "greeting_agent": "http://localhost:8000",
-    "jarvis_agent": "http://localhost:8000",
-    "calc_agent": "http://localhost:8000",
-    "product_agent": "http://localhost:8000",
-}
-
 logging.basicConfig(level=logging.INFO)
 
 # --- Main Endpoint (No changes here) ---
 @app.post("/run_agent", response_model=AgentResponse)
 async def run_agent(request: AgentRequest):
     """Main gateway endpoint - routes requests to appropriate ADK agents"""
+    logging.info(f"[WRAPPER] Received request for AGENT: {request.agent_name}, USER: {request.user_id}, SESSION: {request.session_id}")
+
     if request.agent_name not in AGENT_REGISTRY:
         raise HTTPException(status_code=404, detail=f"Agent '{request.agent_name}' not found")
     
