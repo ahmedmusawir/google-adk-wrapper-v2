@@ -25,42 +25,46 @@ class AgentResponse(BaseModel):
 
 logging.basicConfig(level=logging.INFO)
 
-# --- Main Endpoint (No changes here) ---
+
+# =========================
+# 2) UPDATE run_agent TO CAPTURE THE POSSIBLY-NEW SESSION ID
+# =========================
 @app.post("/run_agent", response_model=AgentResponse)
 async def run_agent(request: AgentRequest):
     print(f"[WRAPPER] Received request for AGENT: {request.agent_name}, USER: {request.user_id}, SESSION: {request.session_id}")
 
-    """Main gateway endpoint - routes requests to appropriate ADK agents"""
     if request.agent_name not in AGENT_REGISTRY:
         raise HTTPException(status_code=404, detail=f"Agent '{request.agent_name}' not found")
-    
+
     agent_url = AGENT_REGISTRY[request.agent_name]
-    
+
     try:
+        # If caller didn't supply a session, make one now
         session_id = request.session_id or await create_session(agent_url, request.user_id, request.agent_name)
-        
-        response_text = await run_agent_session(
-            agent_url, 
+
+        # NOTE: run_agent_session now returns (text, effective_session_id)
+        response_text, effective_session_id = await run_agent_session(
+            agent_url,
             request.message,
             request.user_id,
             request.agent_name,
-            session_id
+            session_id,
         )
-        
+
         return AgentResponse(
             response=response_text,
-            session_id=session_id,
+            session_id=effective_session_id,  # <-- may be a newly created one
             agent_name=request.agent_name,
-            status="success"
+            status="success",
         )
-        
+
     except httpx.HTTPStatusError as e:
         logging.error(f"HTTP Error running agent {request.agent_name}: {e.response.status_code} - {e.response.text}")
         raise HTTPException(status_code=e.response.status_code, detail=f"Error from ADK server: {e.response.text}")
     except Exception as e:
         logging.error(f"Error running agent {request.agent_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 # --- Helper Functions (create_session has no changes) ---
 async def create_session(agent_url: str, user_id: str, app_name: str) -> str:
     """Create a new session with the ADK agent"""
@@ -74,48 +78,63 @@ async def create_session(agent_url: str, user_id: str, app_name: str) -> str:
         response.raise_for_status()
         return session_id
 
-# -------------------------------------------------------------------
-# vv THIS IS THE ONLY FUNCTION THAT HAS CHANGED vv
-# -------------------------------------------------------------------
-async def run_agent_session(agent_url: str, message: str, user_id: str, app_name: str, session_id: str) -> str:
-    """Run the agent and parse the response universally."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"{agent_url}/run",
-            headers={"Content-Type": "application/json"},
-            json={
-                "app_name": app_name,
-                "user_id": user_id,
-                "session_id": session_id,
-                "new_message": {
-                    "role": "user",
-                    "parts": [{"text": message}]
-                }
-            }
-        )
-        response.raise_for_status()
 
-        # --- UNIVERSAL PARSING LOGIC ---
-        events: List[Dict[str, Any]] = response.json()
-        
-        final_response = "Agent did not provide a final text response."
-        
-        # Iterate backwards through events to find the last model response first.
+# =========================
+# 1) REPLACE run_agent_session WITH THIS VERSION
+# =========================
+async def run_agent_session(agent_url: str, message: str, user_id: str, app_name: str, session_id: str) -> tuple[str, str]:
+    """Run the agent and parse the final text.
+    Returns (final_response_text, effective_session_id).
+    May create a new session on 404 and retry once.
+    """
+    import httpx
+
+    async def _post_run(_session_id: str):
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            return await client.post(
+                f"{agent_url}/run",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "app_name": app_name,
+                    "user_id": user_id,
+                    "session_id": _session_id,
+                    "new_message": {"role": "user", "parts": [{"text": message}]},
+                },
+            )
+
+    # First attempt with provided session_id (may be None/invalid)
+    r = await _post_run(session_id)
+
+    # If session is missing at ADK, create fresh session and retry once
+    if r.status_code == 404:
+        new_session_id = await create_session(agent_url, user_id, app_name)
+        r = await _post_run(new_session_id)
+        r.raise_for_status()
+        events = r.json()
+        # Parse final text and return with the *new* session id
+        final_text = "Agent did not provide a final text response."
         for event in reversed(events):
             content = event.get("content")
-            if content and content.get("role") == "model" and "parts" in content:
-                # Once we find the model's turn, search its parts for the text.
-                # Iterate backwards through parts to find the final text first.
-                for part in reversed(content.get("parts", [])):
+            if content and content.get("role") == "model" and isinstance(content.get("parts"), list):
+                for part in reversed(content["parts"]):
                     if isinstance(part, dict) and "text" in part:
-                        final_response = part["text"]
-                        # Found the final answer, no need to look further.
-                        return final_response
-                        
-    return final_response
-# -------------------------------------------------------------------
-# ^^ THIS IS THE ONLY FUNCTION THAT HAS CHANGED ^^
-# -------------------------------------------------------------------
+                        final_text = part["text"]
+                        return final_text, new_session_id
+        return final_text, new_session_id
+
+    # Non-404 path (success or other error)
+    r.raise_for_status()
+    events = r.json()
+    final_text = "Agent did not provide a final text response."
+    for event in reversed(events):
+        content = event.get("content")
+        if content and content.get("role") == "model" and isinstance(content.get("parts"), list):
+            for part in reversed(content["parts"]):
+                if isinstance(part, dict) and "text" in part:
+                    final_text = part["text"]
+                    return final_text, session_id
+    return final_text, session_id
+
 
 # --- Utility Endpoints (No changes here) ---
 @app.get("/health")
