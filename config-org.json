@@ -4,7 +4,7 @@
       "adk_bundle_url": "http://localhost:8000"
     },
     "cloud": {
-      "adk_bundle_url": "https://adk-bundle-prod-v2-952978338090.us-east1.run.app"
+      "adk_bundle_url": "https://your-adk-bundle-cloud-url.a.run.app"
     }
   },
   "agents": [

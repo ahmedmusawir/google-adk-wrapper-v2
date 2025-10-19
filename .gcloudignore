@@ -1,0 +1,17 @@
+# This file tells gcloud what to NOT upload to Cloud Build.
+
+# Ignore the virtual environment
+.venv/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore Git directory and local environment files
+.git/
+.gitignore
+.env
+
+# Ignore any local log files or sensitive keys
+*.log
+*.json

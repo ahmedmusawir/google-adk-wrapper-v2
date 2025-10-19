@@ -9,6 +9,7 @@ def load_config() -> Dict[str, str]:
     Loads config.json, gets the base URL for the current environment,
     and dynamically builds the agent registry.
     """
+    # FOR LOCAL TESTING
     env = os.getenv("APP_ENV", "local")
     logging.info(f"Loading configuration for environment: {env}")
 
